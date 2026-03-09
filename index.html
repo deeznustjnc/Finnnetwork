@@ -760,34 +760,29 @@ document.getElementById('settingsBtn').addEventListener('click',()=>{
 });
 
 /* ── IPTV ENGINE ── */
-const M3U_URL='https://tvpass.org/playlist/m3u';
+const M3U_URL='./playlist.m3u';
 const EPG_URL='https://tvpass.org/epg.xml';
 let tvChannels=[], tvLoaded=false, epgData={};
 
-// Multiple CORS proxies to try in order
 const CORS_PROXIES=[
   url=>`https://corsproxy.io/?${encodeURIComponent(url)}`,
   url=>`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url=>`https://proxy.cors.sh/${url}`,
-  url=>`https://cors-anywhere.herokuapp.com/${url}`,
 ];
 
 async function fetchWithProxy(url){
+  // Try direct first (works for local files)
+  try{
+    const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    if(res.ok){ const t=await res.text(); if(t&&t.length>100) return t; }
+  }catch(e){}
+  // Try proxies for remote URLs
   for(const proxy of CORS_PROXIES){
     try{
       const res=await fetch(proxy(url),{signal:AbortSignal.timeout(8000)});
-      if(res.ok){
-        const text=await res.text();
-        if(text && text.length>100) return text;
-      }
+      if(res.ok){ const t=await res.text(); if(t&&t.length>100) return t; }
     }catch(e){ continue; }
   }
-  // Last resort: try direct (works if server has CORS headers)
-  try{
-    const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
-    if(res.ok) return await res.text();
-  }catch(e){}
-  throw new Error('All proxies failed');
+  throw new Error('Failed to fetch');
 }
 
 async function loadM3U(){
@@ -971,7 +966,9 @@ body{background:#000;color:#fff;font-family:system-ui,sans-serif;height:100vh;di
 .epg-now{font-size:.65rem;color:#aaa;font-style:italic;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:4px;}
 .epg-bar{height:2px;background:#222;border-radius:2px;overflow:hidden;}
 .epg-fill{height:100%;background:#c53030;border-radius:2px;}
+.video-wrap{position:relative;flex:1;min-height:0;display:flex;}
 video{width:100%;flex:1;background:#000;display:block;min-height:0;}
+.wm-cover{position:absolute;top:0;right:0;width:130px;height:36px;background:#000;z-index:10;pointer-events:none;}
 .err{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;color:#666;font-size:.8rem;text-align:center;padding:30px;}
 .err svg{opacity:.3;}
 .retry{background:#1a1a1a;border:1px solid #333;color:#ccc;padding:7px 18px;border-radius:6px;cursor:pointer;font-size:.75rem;margin-top:4px;}
@@ -988,7 +985,10 @@ ${epgHtml}
   <span id="emsg">Stream unavailable</span>
   <button class="retry" onclick="start()">↺ Retry</button>
 </div>
-<video id="v" controls autoplay playsinline></video>
+<div class="video-wrap">
+  <video id="v" controls autoplay playsinline></video>
+  <div class="wm-cover"></div>
+</div>
 <script>
 const url='${safeUrl}';
 const v=document.getElementById('v');
