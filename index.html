@@ -968,7 +968,7 @@ body{background:#000;color:#fff;font-family:system-ui,sans-serif;height:100vh;di
 .epg-fill{height:100%;background:#c53030;border-radius:2px;}
 .video-wrap{position:relative;flex:1;min-height:0;display:flex;}
 video{width:100%;flex:1;background:#000;display:block;min-height:0;}
-.wm-cover{position:absolute;top:0;right:0;width:130px;height:36px;background:#000;z-index:10;pointer-events:none;}
+.wm-cover{position:absolute;top:0;right:0;width:130px;height:36px;z-index:10;pointer-events:none;backdrop-filter:blur(12px) brightness(0.3);-webkit-backdrop-filter:blur(12px) brightness(0.3);}
 .err{display:none;flex-direction:column;align-items:center;justify-content:center;flex:1;gap:12px;color:#666;font-size:.8rem;text-align:center;padding:30px;}
 .err svg{opacity:.3;}
 .retry{background:#1a1a1a;border:1px solid #333;color:#ccc;padding:7px 18px;border-radius:6px;cursor:pointer;font-size:.75rem;margin-top:4px;}
@@ -991,29 +991,48 @@ ${epgHtml}
 </div>
 <script>
 const url='${safeUrl}';
+const PROXIES=[
+  u=>'https://corsproxy.io/?'+encodeURIComponent(u),
+  u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+];
 const v=document.getElementById('v');
 const badge=document.getElementById('badge');
 const errEl=document.getElementById('err');
-let hls=null;
+let hls=null, proxyIdx=0;
 function showErr(msg){errEl.style.display='flex';v.style.display='none';document.getElementById('emsg').textContent=msg;badge.textContent='Error';badge.className='badge';}
-function start(){
-  errEl.style.display='none';v.style.display='block';badge.textContent='Connecting…';badge.className='badge connecting';
+function tryUrl(streamUrl){
   if(hls){hls.destroy();hls=null;}
   v.src='';
   if(Hls.isSupported()){
-    hls=new Hls({enableWorker:true,lowLatencyMode:true});
-    hls.loadSource(url);
+    hls=new Hls({enableWorker:true,lowLatencyMode:true,manifestLoadingTimeOut:10000,manifestLoadingMaxRetry:2});
+    hls.loadSource(streamUrl);
     hls.attachMedia(v);
     hls.on(Hls.Events.MANIFEST_PARSED,()=>{v.play().catch(()=>{});badge.textContent='● LIVE';badge.className='badge live';});
-    hls.on(Hls.Events.ERROR,(_,d)=>{if(d.fatal)showErr('Stream error: '+d.details);});
+    hls.on(Hls.Events.ERROR,(_,d)=>{
+      if(d.fatal){
+        // Try next proxy
+        if(proxyIdx < PROXIES.length){
+          const proxied=PROXIES[proxyIdx++](url);
+          tryUrl(proxied);
+        } else {
+          showErr('Stream unavailable — channel may be offline');
+        }
+      }
+    });
   } else if(v.canPlayType('application/vnd.apple.mpegurl')){
-    v.src=url;v.play();badge.textContent='● LIVE';badge.className='badge live';
+    v.src=streamUrl;v.play();badge.textContent='● LIVE';badge.className='badge live';
   } else {
-    v.src=url;
+    v.src=streamUrl;
     v.onplaying=()=>{badge.textContent='● LIVE';badge.className='badge live';};
     v.onerror=()=>showErr('Format not supported');
     v.play().catch(()=>showErr('Playback blocked'));
   }
+}
+function start(){
+  errEl.style.display='none';v.style.display='block';
+  badge.textContent='Connecting…';badge.className='badge connecting';
+  proxyIdx=0;
+  tryUrl(url);
 }
 start();
 <\/script></body></html>`;
