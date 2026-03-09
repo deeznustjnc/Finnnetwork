@@ -762,31 +762,61 @@ document.getElementById('settingsBtn').addEventListener('click',()=>{
 /* ── IPTV ENGINE ── */
 const M3U_URL='https://tvpass.org/playlist/m3u';
 const EPG_URL='https://tvpass.org/epg.xml';
-let tvChannels=[], tvLoaded=false, epgData={}; // epgData: {tvg-id -> [{title,start,stop}]}
+let tvChannels=[], tvLoaded=false, epgData={};
+
+// Multiple CORS proxies to try in order
+const CORS_PROXIES=[
+  url=>`https://corsproxy.io/?${encodeURIComponent(url)}`,
+  url=>`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url=>`https://proxy.cors.sh/${url}`,
+  url=>`https://cors-anywhere.herokuapp.com/${url}`,
+];
+
+async function fetchWithProxy(url){
+  for(const proxy of CORS_PROXIES){
+    try{
+      const res=await fetch(proxy(url),{signal:AbortSignal.timeout(8000)});
+      if(res.ok){
+        const text=await res.text();
+        if(text && text.length>100) return text;
+      }
+    }catch(e){ continue; }
+  }
+  // Last resort: try direct (works if server has CORS headers)
+  try{
+    const res=await fetch(url,{signal:AbortSignal.timeout(8000)});
+    if(res.ok) return await res.text();
+  }catch(e){}
+  throw new Error('All proxies failed');
+}
 
 async function loadM3U(){
   const loading=document.getElementById('tvLoading');
   const list=document.getElementById('tvList');
-  loading.style.display='flex'; list.innerHTML='';
+  loading.style.display='flex';
+  loading.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28" style="animation:spin 1.5s linear infinite"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Loading channels…`;
+  list.innerHTML='';
   try{
-    // Load M3U and EPG in parallel
-    const [m3uRes, epgRes] = await Promise.allSettled([
-      fetch(`https://corsproxy.io/?${encodeURIComponent(M3U_URL)}`),
-      fetch(`https://corsproxy.io/?${encodeURIComponent(EPG_URL)}`)
-    ]);
-    if(m3uRes.status==='fulfilled'){
-      const text=await m3uRes.value.text();
-      tvChannels=parseM3U(text);
-    } else { throw new Error('M3U failed'); }
-    if(epgRes.status==='fulfilled'){
-      const xml=await epgRes.value.text();
-      epgData=parseEPG(xml);
-    }
+    // Try M3U first (required), EPG optional
+    const m3uText=await fetchWithProxy(M3U_URL);
+    tvChannels=parseM3U(m3uText);
+    if(tvChannels.length===0) throw new Error('No channels parsed');
+
+    // Load EPG in background - don't block channel list
     tvLoaded=true;
     loading.style.display='none';
     renderTvChannels('');
+
+    // Now try EPG silently
+    fetchWithProxy(EPG_URL).then(xml=>{
+      epgData=parseEPG(xml);
+      renderTvChannels(document.getElementById('tvSearch').value||'');
+    }).catch(()=>{}); // EPG failure is silent
+
   }catch(e){
-    loading.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>Failed to load channels.<br/>Check connection.`;
+    loading.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="28" height="28"><circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/></svg>
+    <span>Failed to load channels</span>
+    <button class="hist-clear" onclick="tvLoaded=false;loadM3U()" style="margin-top:6px">↺ Retry</button>`;
   }
 }
 
